@@ -1,0 +1,202 @@
+# !pip install matplotlib
+# !pip install tensorflow kears
+# !pip install git+https://github.com/rcmalli/keras-vggface.git
+# !pip install keras_vggface
+# !pip install keras_applications
+# #for OpenCV
+!pip install keras-facenet
+!pip install keras-resnet
+!pwd
+
+import os
+import pandas as pd
+import numpy as np
+
+import tensorflow as keras
+import matplotlib.pyplot as plt
+from keras.layers import Dense, GlobalAveragePooling2D, Flatten
+#from keras.preprocessing import image
+from keras.applications.mobilenet import preprocess_input
+#from keras.preprocessing.image import ImageDataGenerator
+from keras.models import Model
+from keras.optimizers import Adam
+from keras.utils import image_dataset_from_directory
+
+import os
+import time
+import cv2
+import numpy as np
+import tensorflow as tf
+from tensorflow.keras.models import model_from_json
+from tensorflow.keras.applications import ResNet50
+from tensorflow.keras import layers, Model, Input
+import tensorflow as tf
+from keras_facenet import FaceNet
+import keras
+from keras.applications.vgg16 import VGG16
+
+from keras.applications.vgg16 import preprocess_input
+import numpy as np
+
+model_vgg16 = VGG16(weights='imagenet', include_top=False)
+# Based on RESNET50 architecture
+model_resnet50 = ResNet50(weights='imagenet', include_top=False)
+
+
+!mkdir employees
+def load_saved_model():
+    '''Load the saved model from the disk'''
+    model = tf.keras.applications.ResNet50(weights='imagenet')
+    #model=tf.keras.applications.InceptionResNetV2(weights='imagenet')
+
+    return model
+def img_to_encoding(image_path):
+    '''Converts an image to an embedding vector by using the model'''
+    img = tf.keras.preprocessing.image.load_img(image_path, target_size = (224,224))
+    img = np.around(np.array(img) / 255.0, decimals = 12)
+    x_train = np.expand_dims(img, axis=0)
+    embedding = model_vgg16.predict_on_batch(x_train)
+    # Flatten the embedding before calculating the norm
+    embedding = embedding.flatten()
+    return embedding / np.linalg.norm(embedding, ord=2)
+
+# def img_to_encoding(image_path):
+#     '''Converts an image to an embedding vector by using the model'''
+#     img = tf.keras.preprocessing.image.load_img(image_path, target_size = (224,224))
+#     img = np.around(np.array(img) / 255.0, decimals = 12)
+#     x_train = np.expand_dims(img, axis=0)
+#     embedding = model_vgg16.predict_on_batch(x_train)
+#     return embedding / np.linalg.norm(embedding, ord=2)
+
+def initialize_database():
+    '''Initialize the database of people names and their photos encodings'''
+    database = {}
+    for file in os.listdir('employees'):
+        if file.endswith('.jpg'):
+            image_path = os.path.join('employees', file)
+            embedding = img_to_encoding(image_path)
+            database[file[:-4]] = embedding
+    return database
+
+database = {}
+for file in os.listdir('employees'):
+    if file.endswith('.jpg'):
+        image_path = os.path.join('employees', file)
+        embedding = img_to_encoding(image_path)
+        database[file[:-4]] = embedding
+
+def get_image_from_camera(cam_port = 0):
+    '''This function captures an image from the camera and returns it as a numpy array.'''
+    cam = cv2.VideoCapture(cam_port)
+    time.sleep(1)
+    result, image = cam.read()
+    if result:
+        cv2.imshow('Captured image', image)
+        cv2.waitKey(10000)
+        cv2.destroyWindow('Captured image'); cv2.waitKey(1)
+        cam.release()
+        return image
+    else:
+        raise Exception('No image detected. Please try again')
+
+def identify_person(image_path):
+    '''Compare the picture from the camera to the pictures in the database'''
+    incoming_person_image_encoding = img_to_encoding(image_path)
+
+    distance_between_images = 100
+
+    for name, employee_encoding in database.items():
+        dist = np.linalg.norm(incoming_person_image_encoding - employee_encoding)
+        if dist < distance_between_images:
+            distance_between_images = dist
+            identified_as = name
+
+    if distance_between_images > 0.9:
+        print(f'Not sure, maybe it is {identified_as}')
+    else:
+        print(f'Employee identified\nName: {identified_as}')
+        os.system(f"say 'Hello {identified_as}'")
+
+def recognize_face_from_camera():
+    '''Main function to execute face recognition'''
+    # face_to_recognize = get_image_from_camera()
+    # cv2.imwrite('face_to_recognize.jpg', face_to_recognize)
+    identify_person('Shilpa.jpg')
+ #   os.remove('face_to_recognize.jpg')
+
+def add_new_user_to_database():
+    '''Take picture of new employee, store in employees folder and in database as an embedding'''
+    name = input('Please enter your name: ')
+    image = get_image_from_camera()
+    image_path = 'employees/' + name + '.jpg'
+    cv2.imwrite(image_path, image)
+    database[name] = img_to_encoding(image_path)
+    print(f'New user "{name}" added to database')
+    return database
+
+database = initialize_database()
+
+#add_new_user_to_database()
+recognize_face_from_camera()
+
+#hyperparameter tuning
+!pip install keras-tuner
+
+###TRIAL
+import tensorflow as tf
+from tensorflow.keras.applications import ResNet50
+from tensorflow.keras.layers import GlobalAveragePooling2D, Dense
+from tensorflow.keras.models import Model
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
+from tensorflow.keras.mixed_precision import set_global_policy
+from tensorflow.data import AUTOTUNE
+
+# Enable mixed precision training
+set_global_policy('mixed_float16')
+
+# Define the model with reduced complexity
+def build_model():
+    base_model = ResNet50(weights='imagenet', include_top=False, input_shape=(128, 128, 3))
+    
+    # Freeze some layers to reduce training time
+    for layer in base_model.layers[:100]:
+        layer.trainable = False
+    
+    x = base_model.output
+    x = GlobalAveragePooling2D()(x)
+    x = Dense(128, activation='relu')(x)  # Reduced from 256 to 128 units
+    predictions = Dense(1, activation='sigmoid')(x)
+
+    model = Model(inputs=base_model.input, outputs=predictions)
+
+    # Compile the model with mixed precision
+    model.compile(optimizer=Adam(learning_rate=1e-4), loss='binary_crossentropy', metrics=['accuracy'])
+
+    return model
+
+# Prepare optimized data loading
+def create_dataset(directory, batch_size=32):
+    dataset = tf.keras.preprocessing.image_dataset_from_directory(
+        directory,
+        image_size=(128, 128),  # Reduced resolution
+        batch_size=batch_size
+    )
+    return dataset.prefetch(buffer_size=AUTOTUNE)  # Optimize data pipeline with prefetching
+
+# Build and compile the model
+model = build_model()
+
+# Create datasets
+train_dataset = create_dataset('employees_train')
+val_dataset = create_dataset('employees_val')
+
+# Callbacks to further optimize training
+early_stopping = EarlyStopping(monitor='val_loss', patience=3, restore_best_weights=True)
+reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=2, min_lr=1e-6)
+
+# Train the model with faster data loading and reduced model complexity
+model.fit(train_dataset, epochs=10, validation_data=val_dataset, callbacks=[early_stopping, reduce_lr])
+
+# Save the trained model
+model.save('resnet50_optimized_model.weights.h5'
